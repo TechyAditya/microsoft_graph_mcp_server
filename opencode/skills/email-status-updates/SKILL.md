@@ -7,7 +7,7 @@ description: Use ONLY when the user asks an agent to send email status updates, 
 
 You send status emails on the user's behalf via the `microsoft-graph` MCP server (already authenticated as `contact@adityasethi.dev`).
 
-> **Post-compaction entry point.** If you wake into a task after a compaction and any of these are true — (a) `/tmp/opencode-email-threads/` exists and is non-empty, (b) the running summary mentions an email thread / status emails / `[STARTED]` etc., (c) the user references "the email thread" — **load this skill first, then walk the Recovery ladder below before sending anything**. Do not send a fresh `[STARTED]` from in-context memory.
+> **Post-compaction entry point.** If you wake into a task after a compaction and any of these are true — (a) `/tmp/opencode-email-threads/` exists and is non-empty, (b) the running summary mentions an email thread / status emails / `[STARTED]` etc., (c) the user references "the email thread" — **load this skill first, then walk the Recovery ladder below before sending anything**. Do not send a fresh first email from in-context memory.
 >
 > **Compaction breadcrumb (keep in summary, max ~15 words).** When summarizing for compaction, preserve only: `email-status-updates skill active; thread file at /tmp/opencode-email-threads/<slug>.txt`. That single line is enough to re-trigger this skill on the next turn — do not bloat the summary with the protocol itself, it lives here.
 
@@ -23,10 +23,12 @@ The user's design goals are non-negotiable:
 | Field | Value |
 | --- | --- |
 | `to` | `["contact+mcp@adityasethi.dev"]` (plain string only — Graph rejects `"Name <addr>"` syntax) |
-| `subject` | `[STATUS] Friendly Title` (see below; Friendly Title is **identical across all updates for one task**) |
-| `htmlbody` | Compact HTML. Last paragraph is the agent signature: `<p>— <em>AgentName</em></p>` |
+| `subject` | The Friendly Title, with NO status prefix and NO other decoration. Identical across every send for the task. |
+| `htmlbody` | First paragraph **must** start with the status token in brackets, e.g. `<p>[STARTED] …</p>`. Last paragraph is the agent signature: `<p>— [Agent name]</p>` (substitute the speaking agent's actual name, e.g. Sisyphus, Claude, Oracle). |
 
-### Status tokens (use exactly these, all caps)
+> **Why status lives in the body, not the subject.** Exchange Online re-derives `conversationId` from the normalized subject at `/send` time. Any subject mutation between sends — even just swapping `[STARTED]` for `[PROGRESS]` — forks the conversation. Putting the status in the body's first paragraph is the only way to keep one task in one Outlook conversation while still surfacing the current status in iPhone / Outlook mobile notification previews (they show the first ~100 chars of the body).
+
+### Status tokens (use exactly these, all caps, as the literal first text of the body's first `<p>`)
 
 - `[STARTED]` — first email of a task. Sent via `action=send_new`.
 - `[PROGRESS]` — intermediate update.
@@ -35,13 +37,13 @@ The user's design goals are non-negotiable:
 - `[FAILED]` — task abandoned with reason.
 - `[NOTE]` — out-of-band info during the task.
 
-All updates after `[STARTED]` go via `action=reply` to keep the conversation threaded.
+All updates after the first one go via `action=reply` (subject omitted) to keep the conversation threaded.
 
 ### Friendly Title rules
 
-- 4–8 words, sentence case, no trailing punctuation, no emojis.
-- Describes the task, not the status (status lives in the bracket prefix).
-- Stays **byte-identical** across every update for the same task. Never edit it.
+- 4–8 words, sentence case, no trailing punctuation, no emojis, no `[STATUS]` prefix.
+- Describes the task, not the status (status lives in the body's first paragraph).
+- Stays **byte-identical** across every update for the same task. Never edit it. Never prefix or suffix it.
 - Examples: `Resend integration in portfolio site`, `Migrate auth to Graph OAuth2`, `Inbox cleanup for last 90 days`.
 
 ## Persistence (compaction survival)
@@ -77,22 +79,24 @@ Walk these steps in order — stop at the first one that gives an unambiguous an
    - Zero files (e.g. `/tmp` wiped on reboot, or task pre-dates the persistence rule) → continue to step 2.
 2. **Subject-search recovery via the inbox** (the email thread itself is durable state):
    - `microsoft-graph_search_emails` with `search_type="subject"`, `query="<best-guess title>"`, `days=30`, `inference_classification="all"`.
-   - Exactly one matching thread → strip the `[STATUS]` prefix from the subject to get the canonical Friendly Title, recompute the slug, rewrite `/tmp/opencode-email-threads/<slug>.txt` so future sends skip step 2.
-3. **Still ambiguous** → ask the user which thread to continue. Never start a new `[STARTED]` thread to "be safe" — that's exactly the inbox-splitting failure mode this skill exists to prevent.
+   - Exactly one matching thread → the subject IS the canonical Friendly Title (no status prefix to strip — the skill never put one there). Recompute the slug, rewrite `/tmp/opencode-email-threads/<slug>.txt` so future sends skip step 2.
+3. **Still ambiguous** → ask the user which thread to continue. Never start a new thread to "be safe" — that's exactly the inbox-splitting failure mode this skill exists to prevent.
 
 ## Send protocol
 
-### First email of a task — `[STARTED]`
+### First email of a task
 
 ```
 microsoft-graph_send_email
   action: "send_new"
   to: ["contact+mcp@adityasethi.dev"]
-  subject: "[STARTED] <Friendly Title>"
-  htmlbody: "<p>Starting: <em>&lt;one-sentence scope&gt;</em></p>
+  subject: "<Friendly Title>"
+  htmlbody: "<p>[STARTED] &lt;one-sentence scope&gt;</p>
              <p>Plan: ...</p>
-             <p>— Sisyphus</p>"
+             <p>— [Agent name]</p>"
 ```
+
+The status token `[STARTED]` is the literal first text of the first `<p>` so iPhone / Outlook mobile previews surface it. Subject is the bare Friendly Title — no `[STATUS]` decoration, ever.
 
 Then write the Friendly Title to `/tmp/opencode-email-threads/<slug>.txt` (creating the directory if needed).
 
@@ -110,20 +114,20 @@ Then write the Friendly Title to `/tmp/opencode-email-threads/<slug>.txt` (creat
 4. microsoft-graph_send_email
      action: "reply"
      cache_number: <from step 3>
-     htmlbody: "<p>[PROGRESS|BLOCKED|DONE|FAILED|NOTE] <update body></p>
-                <p>— Sisyphus</p>"
+     htmlbody: "<p>[PROGRESS|BLOCKED|DONE|FAILED|NOTE] &lt;update body&gt;</p>
+                <p>— [Agent name]</p>"
 ```
 
-`subject` is omitted on reply — Graph carries it forward. The status bracket goes in the body's first paragraph for visibility, since Outlook's conversation view will collapse the original subject.
+`subject` is omitted on reply — Graph carries it forward as `RE: <Friendly Title>`. The status token is the very first text of the body's first `<p>` so the new status is what shows in iPhone notification previews.
 
-If you want the subject prefix to also reflect the new status in some clients (Gmail, mobile previews), pass `subject: "[STATUS] <Friendly Title>"` explicitly on the reply. Only do this if the user asks. Default = omit.
+> **Hard rule: never pass a custom `subject` on a reply.** Exchange Online re-derives `conversationId` from the normalized subject at `/send` time, so a reply with any subject other than the auto `RE: <Friendly Title>` forks into a new conversation even though `createReply` set the original conversationId on the draft. `In-Reply-To` / `References` headers do not override this on Exchange. Verified empirically on this tenant.
 
 ## HTML body rules
 
 - No `<br>` between `<p>` tags (creates double-spacing in Outlook).
 - No newlines/whitespace between block elements — keep HTML compact.
 - Use `<p>`, `<strong>`, `<em>`, `<code>`, `<ul><li>`. No inline styles, no `<div>` salad.
-- End every body with `<p>— <em>AgentName</em></p>`. Agent name = the speaking agent's identity ("Sisyphus", "Oracle", "Sisyphus-Junior", etc.).
+- End every body with `<p>— [Agent name]</p>` where `[Agent name]` is the speaking agent's identity (e.g. `Sisyphus`, `Claude`, `Oracle`, `Sisyphus-Junior`). Substitute literally — do not keep the brackets in the sent email.
 - Keep bodies short — this is a status email, not a report. 1–3 short paragraphs.
 
 ## When to send
@@ -149,6 +153,8 @@ Do not email for trivial actions (tool calls, intermediate file edits, normal lo
 
 - Starting a new `send_new` for an update that belongs to an existing task — splits the inbox.
 - Editing the Friendly Title between updates — Outlook will fork the conversation.
+- Putting **anything** other than the bare Friendly Title in the subject — no `[STATUS]` prefix, no `(update N)` suffix, no emoji. Any mutation re-derives `conversationId` and forks the thread.
+- Forgetting to put the status token as the literal first text of the first `<p>` — iPhone / Outlook mobile previews then show the wrong / no status.
 - Putting agent identity in the From address — impossible (M365 rewrites From to the primary SMTP).
 - Sending to `contact@adityasethi.dev` instead of `contact+mcp@adityasethi.dev` — bypasses the user's inbox rule for agent traffic.
 - Verbose HTML, signatures, or marketing-style formatting — this is a status email.
