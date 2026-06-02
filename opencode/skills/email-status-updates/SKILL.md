@@ -15,14 +15,14 @@ The user's design goals are non-negotiable:
 
 1. **Inbox stays clean.** Each task = exactly one Outlook conversation thread. Never two threads for the same task.
 2. **Identity is visible.** Every email shows which agent sent it (Sisyphus, Oracle, etc.) without changing the From address (which is fixed to `contact@adityasethi.dev`).
-3. **Plus-addressing for routing.** All agent mail is sent To `contact+mcp@adityasethi.dev` so the user can filter agent traffic into a folder via Outlook rules.
+3. **Plus-addressing for routing.** All agent mail is sent To `sethi.aditya+mcp@icloud.com` (the user's personal iCloud inbox, with `+mcp` plus-addressing for an iCloud Mail filter rule). The From address remains the M365-authenticated mailbox `contact@adityasethi.dev`.
 4. **Survives compaction.** Mid-task, the conversation context can be summarized away — the protocol must still find the right thread.
 
 ## Format
 
 | Field | Value |
 | --- | --- |
-| `to` | `["contact+mcp@adityasethi.dev"]` (plain string only — Graph rejects `"Name <addr>"` syntax) |
+| `to` | `["sethi.aditya+mcp@icloud.com"]` (plain string only — Graph rejects `"Name <addr>"` syntax) |
 | `subject` | The Friendly Title, with NO status prefix and NO other decoration. Identical across every send for the task. |
 | `htmlbody` | First paragraph **must** start with the status token in brackets, e.g. `<p>[STARTED] …</p>`. Last paragraph is the agent signature: `<p>— [Agent name]</p>` (substitute the speaking agent's actual name, e.g. Sisyphus, Claude, Oracle). |
 
@@ -89,7 +89,7 @@ Walk these steps in order — stop at the first one that gives an unambiguous an
 ```
 microsoft-graph_send_email
   action: "send_new"
-  to: ["contact+mcp@adityasethi.dev"]
+  to: ["sethi.aditya+mcp@icloud.com"]
   subject: "<Friendly Title>"
   htmlbody: "<p>[STARTED] &lt;one-sentence scope&gt;</p>
              <p>Plan: ...</p>
@@ -167,6 +167,6 @@ Do not batch these pings. One blocking event = one `[BLOCKED]` email, even if mu
 - Putting **anything** other than the bare Friendly Title in the subject — no `[STATUS]` prefix, no `(update N)` suffix, no emoji. Any mutation re-derives `conversationId` and forks the thread.
 - Forgetting to put the status token as the literal first text of the first `<p>` — iPhone / Outlook mobile previews then show the wrong / no status.
 - Putting agent identity in the From address — impossible (M365 rewrites From to the primary SMTP).
-- Sending to `contact@adityasethi.dev` instead of `contact+mcp@adityasethi.dev` — bypasses the user's inbox rule for agent traffic.
+- Sending to `contact@adityasethi.dev` (the From address) or to `sethi.aditya@icloud.com` (no plus tag) instead of `sethi.aditya+mcp@icloud.com` — both bypass the iCloud Mail rule that routes agent traffic into its dedicated folder.
 - Verbose HTML, signatures, or marketing-style formatting — this is a status email.
 - Sending heartbeat updates the user didn't ask for.
