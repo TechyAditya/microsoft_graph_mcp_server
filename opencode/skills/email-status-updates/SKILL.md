@@ -142,6 +142,17 @@ Send only when the user has explicitly asked for email updates in this task. Cad
 
 Do not email for trivial actions (tool calls, intermediate file edits, normal logs).
 
+## Mandatory ping before pausing opencode
+
+When this skill is active for a task, opencode pausing silently is the worst-case outcome — the user has stepped away expecting autonomous progress and will come back to find their time was wasted. Two specific actions pause opencode and **always require an email ping FIRST**:
+
+1. **Asking the user a clarifying question** (any tool that blocks for user input, e.g. the `question` tool). Send a `[BLOCKED]` reply that states the question and the options exactly as you intend to ask them in-chat, THEN issue the in-chat question.
+2. **Reading, writing, or opening any `.env`, `.env.*`, `.env.example`, or similarly-named secret file.** opencode prompts the user to approve secret-file access; the prompt blocks the agent loop. Send a `[BLOCKED]` reply naming the exact file path and explaining why you need it, THEN attempt the read/write.
+
+The ping order is non-negotiable: **email first, then issue the blocking action.** If the email fails, still issue the blocking action — don't silently skip the question or the env access — but log the email failure in your in-chat reply so the user can see why no notification arrived.
+
+Do not batch these pings. One blocking event = one `[BLOCKED]` email, even if multiple events happen back-to-back.
+
 ## When NOT to use this skill
 
 - The user did not ask for email updates → don't send any.
